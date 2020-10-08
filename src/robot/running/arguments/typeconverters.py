@@ -12,7 +12,7 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-
+import sys
 from ast import literal_eval
 from collections import OrderedDict
 try:
@@ -30,7 +30,7 @@ from numbers import Integral, Real
 
 from robot.libraries.DateTime import convert_date, convert_time
 from robot.utils import (FALSE_STRINGS, IRONPYTHON, TRUE_STRINGS, PY_VERSION,
-                         PY2, eq, seq2str, type_name, unicode)
+                         PY2, eq, seq2str, type_name, unicode, is_unicode)
 
 
 class TypeConverter(object):
@@ -82,7 +82,7 @@ class TypeConverter(object):
         return self
 
     def convert(self, name, value, explicit_type=True):
-        if self.convert_none and value.upper() == 'NONE':
+        if self.convert_none and is_unicode(value) and value.upper() == 'NONE':
             return None
         try:
             return self._convert(value, explicit_type)
@@ -129,6 +129,8 @@ class BooleanConverter(TypeConverter):
     aliases = ('bool',)
 
     def _convert(self, value, explicit_type=True):
+        if isinstance(value, (float, int)):
+            return bool(value)
         upper = value.upper()
         if upper in TRUE_STRINGS:
             return True
@@ -145,6 +147,8 @@ class IntegerConverter(TypeConverter):
     aliases = ('int', 'long')
 
     def _convert(self, value, explicit_type=True):
+        if explicit_type and isinstance(value, float) and not value.is_integer():
+            raise ValueError
         try:
             return int(value)
         except ValueError:
@@ -192,6 +196,10 @@ class BytesConverter(TypeConverter):
     def _convert(self, value, explicit_type=True):
         if PY2 and not explicit_type:
             return value
+        if not PY2 and isinstance(value, int):
+            return _int_to_bytes(value)
+        if not PY2 and isinstance(value, float):
+            raise ValueError
         try:
             value = value.encode('latin-1')
         except UnicodeEncodeError as err:
@@ -200,11 +208,19 @@ class BytesConverter(TypeConverter):
         return value if not IRONPYTHON else bytes(value)
 
 
+def _int_to_bytes(value):
+    return value.to_bytes((value.bit_length() // 8) + 1, byteorder=sys.byteorder)
+
+
 @TypeConverter.register
 class ByteArrayConverter(TypeConverter):
     type = bytearray
 
     def _convert(self, value, explicit_type=True):
+        if not PY2 and isinstance(value, int):
+            return bytearray(_int_to_bytes(value))
+        if not PY2 and isinstance(value, float):
+            raise ValueError
         try:
             return bytearray(value, 'latin-1')
         except UnicodeEncodeError as err:
@@ -225,6 +241,8 @@ class DateConverter(TypeConverter):
     type = date
 
     def _convert(self, value, explicit_type=True):
+        if isinstance(value, (int, float)):
+            raise ValueError
         dt = convert_date(value, result_format='datetime')
         if dt.hour or dt.minute or dt.second or dt.microsecond:
             raise ValueError("Value is datetime, not date.")
